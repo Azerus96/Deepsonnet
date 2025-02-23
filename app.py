@@ -3,10 +3,11 @@ import os
 import base64
 import logging
 import mimetypes
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 
 import gradio as gr
 from anthropic import Anthropic, APIConnectionError, APIStatusError, RateLimitError
+from anthropic.types import MessageParam
 
 # Constants
 MODEL_NAME = "claude-3-5-sonnet-20241022"
@@ -32,6 +33,9 @@ def validate_file(file_path: str) -> None:
         raise ValueError(f"File size exceeds {MAX_FILE_SIZE_MB}MB limit")
 
     mime_type, _ = mimetypes.guess_type(file_path)
+    if not mime_type:
+        raise ValueError("Could not determine file type")
+    
     if not any(mime_type.startswith(allowed) for allowed in ALLOWED_MIME_TYPES):
         raise ValueError(f"Unsupported file type: {mime_type}")
 
@@ -55,7 +59,7 @@ def process_attachments(files: List[gr.components.File]) -> List[Dict[str, Any]]
             logger.info(f"Successfully processed file: {file.name}")
 
         except Exception as e:
-            logger.error(f"File processing error: {str(e)}")
+            logger.error(f"File processing error: {str(e)}", exc_info=True)
             raise gr.Error(f"File error: {str(e)}") from e
 
     return attachments
@@ -86,13 +90,23 @@ def chat_with_claude(
         client = Anthropic(api_key=api_key)
         attachments = process_attachments(files)
 
-        messages = [{"role": "user", "content": message, "attachments": attachments}]
-        if history:
-            for user_msg, bot_msg in history:
-                messages.extend([
-                    {"role": "user", "content": user_msg},
-                    {"role": "assistant", "content": bot_msg}
-                ])
+        # Build messages list with proper types
+        messages: List[MessageParam] = [MessageParam(
+            role="user",
+            content=message,
+            attachments=attachments
+        )]
+
+        # Add chat history
+        for user_msg, bot_msg in history:
+            messages.append(MessageParam(
+                role="user",
+                content=user_msg
+            ))
+            messages.append(MessageParam(
+                role="assistant",
+                content=bot_msg
+            ))
 
         response = client.messages.create(
             model=MODEL_NAME,
@@ -115,7 +129,8 @@ def chat_with_claude(
 
     except APIStatusError as e:
         logger.error(f"API error: {e.status_code} - {str(e)}")
-        raise gr.Error(f"API error: {e.response.json().get('error', {}).get('message', 'Unknown error')}")
+        error_message = e.response.json().get("error", {}).get("message", "Unknown error")
+        raise gr.Error(f"API error: {error_message}")
 
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}", exc_info=True)
@@ -146,14 +161,17 @@ def handle_chat(
     except Exception as e:
         error_msg = f"Error: {str(e)}"
         updated_history = history + [(message, error_msg)]
-        return updated_history, []
+        return updated_history, files
 
 
 # Gradio Interface
 with gr.Blocks(
     title="Claude 3.5 Chat Interface",
     theme=gr.themes.Soft(),
-    css=".file-size {font-size: 0.8em; color: #666;}"
+    css="""
+    .file-size {font-size: 0.8em; color: #666;}
+    .error {color: #ff4444;}
+    """
 ) as demo:
     gr.Markdown(f"## 🤖 Claude 3.5 Sonnet Chat (v{os.getenv('APP_VERSION', '1.0')})")
 
@@ -185,7 +203,7 @@ with gr.Blocks(
             clear_btn = gr.Button("Clear Chat History", variant="stop")
 
     # Event Handlers
-    submit_btn.click(
+    submit_event = submit_btn.click(
         fn=handle_chat,
         inputs=[msg, chatbot, files],
         outputs=[chatbot, files]
@@ -209,5 +227,6 @@ if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",  # nosec
         server_port=int(os.getenv("PORT", 7860)),
-        show_error=True
+        show_error=True,
+        show_api=False
     )
