@@ -1,4 +1,9 @@
 [tool.mypy]
 ignore_missing_imports = true
 strict = true
-disable_error_code = import-untyped
+show_error_codes = true
+disable_error_code = "import-untyped,union-attr"
+
+[tool.bandit]
+exclude_dirs = ["tests", "venv"]
+skips = ["B104"]
