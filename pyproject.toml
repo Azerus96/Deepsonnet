@@ -1,4 +1,4 @@
-[tool.bandit]
-exclude_dirs = ["tests", "venv"]
-targets = ["app.py"]
-skips = ["B104"]
+[tool.mypy]
+ignore_missing_imports = true
+strict = true
+disable_error_code = import-untyped
